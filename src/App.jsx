@@ -1,6 +1,6 @@
 import { BrowserRouter as Router, Route, Routes, Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Button, Table, Navbar, Nav } from 'react-bootstrap';
+import { Button, Table, Navbar, Nav, Modal, Form } from 'react-bootstrap';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -19,6 +19,9 @@ function App() {
     labels: [],
     datasets: []
   });
+  const [selectedPossession, setSelectedPossession] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [newDateFin, setNewDateFin] = useState(new Date());
 
   useEffect(() => {
     const doFetch = async () => {
@@ -30,7 +33,7 @@ function App() {
         const json = await response.json();
         console.log("Data received from API:", json);
         setPossession(json.possessions);
-        updateChart(json.possessions, startDate, endDate); // Update chart data
+        updateChart(json.possessions, startDate, endDate); 
       } catch (error) {
         console.error('Fetch error:', error);
       }
@@ -78,7 +81,7 @@ function App() {
     return Math.max(valeurActuelle, 0);
   };
   
-  const calculerValeurPatrimoine = () => {
+  const calculerValeurPatrimoine = async () => {
     const dateActuelle = moment(endDate);
     let totalValeur = 0;
 
@@ -90,91 +93,218 @@ function App() {
 
     setPossession(possessionsAvecValeurActuelle);
     setPatrimoineValeur(totalValeur);
-    updateChart(possessionsAvecValeurActuelle, startDate, endDate); // Update chart with current data
+    updateChart(possessionsAvecValeurActuelle, startDate, endDate); 
+  };
+
+  const handleModify = async () => {
+    if (!selectedPossession) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/possession/${selectedPossession.libelle}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          newLibelle: selectedPossession.libelle,
+          valeur: selectedPossession.valeur,
+          dateDebut: selectedPossession.dateDebut,
+          dateFin: newDateFin ? moment(newDateFin).format('YYYY-MM-DD') : null,
+          tauxAmortissement: selectedPossession.tauxAmortissement,
+          valeurConstante: selectedPossession.valeurConstante,
+          jour: selectedPossession.jour
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Erreur lors de la modification');
+      }
+
+      const json = await response.json();
+      setPossession(prev => prev.map(p => p.libelle === selectedPossession.libelle ? json : p));
+      setShowModal(false); 
+    } catch (error) {
+      console.error('Erreur lors de la modification:', error);
+    }
+  };
+
+  const handleClose = async (libelle) => {
+    try {
+      const response = await fetch(`http://localhost:5000/possession/${libelle}/close`, {
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        throw new Error('Erreur lors de la clôture');
+      }
+
+      const json = await response.json();
+      setPossession(prev => prev.map(p => p.libelle === libelle ? json : p));
+    } catch (error) {
+      console.error('Erreur lors de la clôture:', error);
+    }
   };
 
   return (
     <Router>
-      <div className="container">
-        <Navbar bg="light" expand="lg">
-          <Navbar.Brand as={Link} to="/">Home</Navbar.Brand>
-          <Nav className="mr-auto">
-            <Nav.Link as={Link} to="/tableau">Tableau</Nav.Link>
-            <Nav.Link as={Link} to="/graphique">Graphique</Nav.Link>
-          </Nav>
-        </Navbar>
+      <Navbar bg="light" expand="lg">
+        <Navbar.Brand as={Link} to="/">BudgetMaster</Navbar.Brand>
+        <Nav className="mr-auto">
+          <Nav.Link as={Link} to="/patrimoine">Patrimoine</Nav.Link>
+          <Nav.Link as={Link} to="/possession">Possessions</Nav.Link>
+        </Nav>
+      </Navbar>
 
-        <div className="main-content">
-          <Routes>
-            <Route path="/tableau" element={
-              <div className="table-container">
-                <Table striped="columns">
-                  <thead>
-                    <tr>
-                      <th>Libellé</th>
-                      <th>Valeur Initiale</th>
-                      <th>Date Fin</th>
-                      <th>Amortissement</th>
-                      <th>Valeur Actuelle</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {possession.length > 0 ? (
-                      possession.map((item, index) => (
-                        <tr key={index}>
-                          <td>{item.libelle}</td>
-                          <td>{item.valeur}</td>
-                          <td>{item.dateFin ? moment(item.dateFin).format('YYYY-MM-DD') : "N/A"}</td>
-                          <td>{item.valeurActuelle ? item.valeurActuelle.toFixed(2) : "0"}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan="5">Aucune donnée disponible</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </Table>
+      <Routes>
+        <Route path="/patrimoine" element={
+          <div>
+            <h1>Patrimoine</h1>
+            <DatePicker selected={startDate} onChange={date => setStartDate(date)} />
+            <DatePicker selected={endDate} onChange={date => setEndDate(date)} />
+            <Button onClick={calculerValeurPatrimoine}>Calculer</Button>
+            <h3>Valeur Totale: {patrimoineValeur}</h3>
+            <Line data={chartData} />
+          </div>
+        } />
 
-                <div className="mt-3">
-                  <label className="ml-3">Date Fin</label>
-                  <DatePicker
-                    selected={endDate}
-                    onChange={(date) => setEndDate(date)}
-                    dateFormat="yyyy-MM-dd"
-                    className="control ml-2"
-                  />
-                  <Button onClick={calculerValeurPatrimoine} className="ml-2">
-                    Valider
-                  </Button>
-                </div>
+        <Route path="/possession" element={
+          <div>
+            <h1>Liste des Possessions</h1>
+            <Button as={Link} to="/possession/create">Ajouter Nouvelle Possession</Button>
+            <Table striped bordered hover>
+              <thead>
+                <tr>
+                  <th>Libelle</th>
+                  <th>Valeur</th>
+                  <th>Date Début</th>
+                  <th>Date Fin</th>
+                  <th>Taux</th>
+                  <th>Valeur Actuelle</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {possession.map(item => (
+                  <tr key={item.libelle}>
+                    <td>{item.libelle}</td>
+                    <td>{item.valeur}</td>
+                    <td>{item.dateDebut}</td>
+                    <td>{item.dateFin || 'N/A'}</td>
+                    <td>{item.tauxAmortissement}</td>
+                    <td>{calculerValeurActuelle(item, moment())}</td>
+                    <td>
+                      <Button onClick={() => { setSelectedPossession(item); setShowModal(true); }}>Modifier</Button>
+                      <Button onClick={() => handleClose(item.libelle)}>Clôturer</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            <Modal show={showModal} onHide={() => setShowModal(false)}>
+              <Modal.Header closeButton>
+                <Modal.Title>Modifier Possession</Modal.Title>
+              </Modal.Header>
+              <Modal.Body>
+                <Form>
+                  <Form.Group>
+                    <Form.Label>Libelle</Form.Label>
+                    <Form.Control
+                      type="text"
+                      value={selectedPossession?.libelle || ''}
+                      onChange={e => setSelectedPossession(prev => ({ ...prev, libelle: e.target.value }))}
+                    />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Label>Valeur</Form.Label>
+                    <Form.Control
+                      type="number"
+                      value={selectedPossession?.valeur || ''}
+                      onChange={e => setSelectedPossession(prev => ({ ...prev, valeur: e.target.value }))}
+                    />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Label>Date Début</Form.Label>
+                    <Form.Control
+                      type="date"
+                      value={selectedPossession?.dateDebut || ''}
+                      onChange={e => setSelectedPossession(prev => ({ ...prev, dateDebut: e.target.value }))}
+                    />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Label>Date Fin</Form.Label>
+                    <DatePicker selected={newDateFin} onChange={date => setNewDateFin(date)} />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Label>Taux d'Amortissement</Form.Label>
+                    <Form.Control
+                      type="number"
+                      value={selectedPossession?.tauxAmortissement || ''}
+                      onChange={e => setSelectedPossession(prev => ({ ...prev, tauxAmortissement: e.target.value }))}
+                    />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Label>Valeur Constante</Form.Label>
+                    <Form.Control
+                      type="number"
+                      value={selectedPossession?.valeurConstante || ''}
+                      onChange={e => setSelectedPossession(prev => ({ ...prev, valeurConstante: e.target.value }))}
+                    />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Label>Jour</Form.Label>
+                    <Form.Control
+                      type="number"
+                      value={selectedPossession?.jour || ''}
+                      onChange={e => setSelectedPossession(prev => ({ ...prev, jour: e.target.value }))}
+                    />
+                  </Form.Group>
+                </Form>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="secondary" onClick={() => setShowModal(false)}>Fermer</Button>
+                <Button variant="primary" onClick={handleModify}>Sauvegarder</Button>
+              </Modal.Footer>
+            </Modal>
+          </div>
+        } />
 
-                <div className="mt-3">
-                  <h3>Valeur du Patrimoine: {patrimoineValeur.toFixed(2)} Ar</h3>
-                </div>
-              </div>
-            } />
-            <Route path="/graphique" element={
-              <div className="chart-container">
-                <h3>Graphique de Valeur des Possessions</h3>
-                <div className="mt-3">
-                  <label className="ml-3">Date Fin</label>
-                  <DatePicker
-                    selected={endDate}
-                    onChange={(date) => {
-                      setEndDate(date);
-                      updateChart(possession, startDate, date);
-                    }}
-                    dateFormat="yyyy-MM-dd"
-                    className="control ml-2"
-                  />
-                </div>
-                <Line data={chartData} />
-              </div>
-            } />
-          </Routes>
-        </div>
-      </div>
+        <Route path="/possession/create" element={
+          <div>
+            <h1>Ajouter Nouvelle Possession</h1>
+            <Form>
+              <Form.Group>
+                <Form.Label>Libelle</Form.Label>
+                <Form.Control type="text" placeholder="Libelle" />
+              </Form.Group>
+              <Form.Group>
+                <Form.Label>Valeur</Form.Label>
+                <Form.Control type="number" placeholder="Valeur" />
+              </Form.Group>
+              <Form.Group>
+                <Form.Label>Date Début</Form.Label>
+                <Form.Control type="date" />
+              </Form.Group>
+              <Form.Group>
+                <Form.Label>Date Fin</Form.Label>
+                <Form.Control type="date" />
+              </Form.Group>
+              <Form.Group>
+                <Form.Label>Taux d'Amortissement</Form.Label>
+                <Form.Control type="number" placeholder="Taux d'Amortissement" />
+              </Form.Group>
+              <Form.Group>
+                <Form.Label>Valeur Constante</Form.Label>
+                <Form.Control type="number" placeholder="Valeur Constante" />
+              </Form.Group>
+              <Form.Group>
+                <Form.Label>Jour</Form.Label>
+                <Form.Control type="number" placeholder="Jour" />
+              </Form.Group>
+              <Button variant="primary" type="submit">Ajouter</Button>
+            </Form>
+          </div>
+        } />
+
+  
+      </Routes>
     </Router>
   );
 }
